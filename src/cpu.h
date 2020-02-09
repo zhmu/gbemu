@@ -29,6 +29,7 @@ namespace gb::cpu {
         uint8_t fl{};
         bool ime{};
         bool halt{};
+        bool stop{};
         Address pc{}, sp{};
     };
 
@@ -1633,7 +1634,7 @@ namespace gb::cpu {
                     return 4;
                  } },
         /* 10 */ { "stop {}", Argument::Imm8, [](Registers& regs, Memory& mem) {
-                    std::abort(); // XXX for now
+                    regs.stop = true;
                     return 4;
                  } },
         /* 11 */ { "ld de,{}", Argument::Imm16, [](Registers& regs, Memory& mem) {

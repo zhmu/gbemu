@@ -139,7 +139,13 @@ int main(int argc, char* argv[])
         };
 
         int numClocks = 4; // simulate NOP if halted
-        if (!regs.halt) {
+        if (regs.stop) {
+            // Wait until a button press
+            printf("in stop\n");
+            if (io.buttonPressed != 0)
+                regs.stop = false;
+
+        } else if (!regs.halt) {
             const auto orig_regs = regs;
             const auto opcode = gb::cpu::detail::ReadAndAdvancePC_u8(regs, memory);
 
