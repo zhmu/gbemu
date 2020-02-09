@@ -4,6 +4,8 @@
 #include <chrono>
 #include <thread>
 #include <vector>
+
+#include "gui.h"
 #include "memory.h"
 #include "io.h"
 
@@ -71,12 +73,32 @@ struct Video::Impl
     Impl()
     {
         SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
+
+        gui::InitGL();
+
         window = SDL_CreateWindow("GBEMU", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, windowWidth, windowHeight, 0);
         renderer = SDL_CreateRenderer(window, -1, 0);
 
         texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, windowWidth, windowHeight);
 
+        gui::Init();
+
         lastHSyncTime = std::chrono::steady_clock::now();
+    }
+
+    ~Impl()
+    {
+        SDL_DestroyWindow(window);
+        gui::Cleanup();
+    }
+
+    void Render()
+    {
+        SDL_RenderClear(renderer);
+        SDL_RenderCopy(renderer, texture, NULL, NULL);
+        SDL_RenderPresent(renderer);
+
+        gui::Render();
     }
 
     void FillBG(Memory& memory, uint32_t* displayLine, const int scanLine)
@@ -270,9 +292,7 @@ struct Video::Impl
             }
 
             if (scanLine == 154) {
-                SDL_RenderClear(renderer);
-                SDL_RenderCopy(renderer, texture, NULL, NULL);
-                SDL_RenderPresent(renderer);
+                Render();
 
                 Register(io::LY) = 0;
                 triggerLYCInterrupt();
@@ -309,6 +329,7 @@ struct Video::Impl
     {
         SDL_Event event;
         while(SDL_PollEvent(&event)) {
+            gui::ProcessEvent(&event);
             switch(event.type) {
                 case SDL_QUIT: return false;
                 case SDL_KEYDOWN: {

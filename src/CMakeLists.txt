@@ -1,8 +1,10 @@
 add_definitions(-std=c++17)
-add_executable(gbemu main.cpp memory.cpp io.cpp video.cpp cartridge.cpp audio.cpp)
+add_executable(gbemu main.cpp memory.cpp io.cpp video.cpp cartridge.cpp audio.cpp gui.cpp)
 
-find_package(SDL2 REQUIRED)
-include_directories(${SDL2_INCLUDE_DIRS})
+include_directories(../external/imgui ../external/imgui/examples ../external/imgui/examples/libs/gl3w)
+add_definitions(-DIMGUI_IMPL_OPENGL_LOADER_GL3W)
+
 target_link_libraries(gbemu ${SDL2_LIBRARIES})
-
 target_link_libraries(gbemu fmt::fmt)
+target_link_libraries(gbemu imgui)
+target_link_libraries(gbemu dl GLX)
