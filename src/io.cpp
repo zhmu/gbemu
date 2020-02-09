@@ -1,5 +1,6 @@
 #include "io.h"
 #include "memory.h"
+#include "audio.h"
 #include "video.h"
 
 namespace gb {
@@ -36,6 +37,8 @@ namespace gb {
         }
         if (address >= io::LCDC && address <= io::WX)
             return video.Read(address);
+        if (address >= io::NR10 && address <= io::AUD3WAVERAMEnd)
+            return audio.Read(address);
         return Register(address);
     }
 
@@ -43,6 +46,10 @@ namespace gb {
     {
         if (address >= io::LCDC && address <= io::WX) {
             video.Write(address, value);
+            return;
+        }
+        if (address >= io::NR10 && address <= io::AUD3WAVERAMEnd) {
+            audio.Write(address, value);
             return;
         }
 

@@ -2,6 +2,7 @@
 #include "memory.h"
 #include "io.h"
 #include "video.h"
+#include "audio.h"
 #include "cartridge.h"
 
 #include <fstream>
@@ -14,6 +15,7 @@ using IO = gb::IO;
 using Memory = gb::Memory;
 using Registers = gb::cpu::Registers;
 using Video = gb::Video;
+using Audio = gb::Audio;
 
 namespace {
 
@@ -116,7 +118,8 @@ int main(int argc, char* argv[])
     if (!ProcessOptions(argc, argv)) return 1;
 
     Video video;
-    IO io(video);
+    Audio audio;
+    IO io(video, audio);
     Memory memory(io);
     memory.enableTracing = optionTraceMemory;
     Registers regs;
@@ -136,6 +139,7 @@ int main(int argc, char* argv[])
         auto tick = [&](const int numClocks) {
             io.Tick(numClocks);
             video.Tick(io, memory, numClocks);
+            audio.Tick(io, memory, numClocks);
         };
 
         int numClocks = 4; // simulate NOP if halted

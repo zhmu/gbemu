@@ -68,7 +68,8 @@ namespace gb {
         inline constexpr Address NR50 = 0xff24;
         inline constexpr Address NR51 = 0xff25;
         inline constexpr Address NR52 = 0xff26;
-        inline constexpr Address AUD3WAVERAM = 0xff30; // until ff3f
+        inline constexpr Address AUD3WAVERAM = 0xff30;
+        inline constexpr Address AUD3WAVERAMEnd = 0xff3f;
         // Video
         inline constexpr Address LCDC = 0xff40;
         inline constexpr Address STAT = 0xff41;

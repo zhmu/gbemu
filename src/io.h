@@ -8,6 +8,7 @@ namespace gb {
     namespace cpu { struct Registers; }
     struct Memory;
     class Video;
+    class Audio;
 
     namespace button {
         inline constexpr uint8_t A = (1 << 0);
@@ -21,7 +22,7 @@ namespace gb {
     }
 
     struct IO {
-        IO(Video& video) : video(video) { }
+        IO(Video& video, Audio& audio) : video(video), audio(audio) { }
 
         uint8_t Read(Address address);
         void Write(Address address, uint8_t value);
@@ -32,6 +33,7 @@ namespace gb {
         uint8_t& Register(const Address address);
 
         Video& video;
+        Audio& audio;
         std::array<uint8_t, 128> data{};
         int timaCount{}, divCount{}, lcdCount{};
 
