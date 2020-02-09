@@ -332,8 +332,8 @@ struct Video::Impl
     int mode{lcd_mode::scanOAM};
     int stateCycles{};
     int stateCounter{};
-    std::array<uint32_t, windowWidth> displayLine;
-    std::array<uint8_t, 12> data;
+    std::array<uint32_t, windowWidth> displayLine{};
+    std::array<uint8_t, 12> data{};
     std::chrono::time_point<std::chrono::steady_clock> lastHSyncTime;
 
     struct Sprite {
@@ -341,7 +341,7 @@ struct Video::Impl
         int tileNumber{};
         int flags{};
     };
-    std::array<Sprite, 10> sprites;
+    std::array<Sprite, 10> sprites{};
     size_t activeSprites{};
 };
 

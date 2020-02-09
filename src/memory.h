@@ -29,6 +29,6 @@ namespace gb {
 
         IO& io;
         bool enableTracing;
-        std::array<uint8_t, 65536> data;
+        std::array<uint8_t, 65536> data{};
     };
 }

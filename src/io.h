@@ -32,7 +32,7 @@ namespace gb {
         uint8_t& Register(const Address address);
 
         Video& video;
-        std::array<uint8_t, 128> data;
+        std::array<uint8_t, 128> data{};
         int timaCount{}, divCount{}, lcdCount{};
 
         uint8_t buttonPressed{};
