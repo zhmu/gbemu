@@ -87,6 +87,11 @@ namespace gb {
         Register(io::IF) &= ~(1 << n);
     }
 
+    bool IO::IsBootstrapROMEnabled()
+    {
+        return Register(io::DMG) == 0;
+    }
+
     void IO::Tick(const int cycles)
     {
         divCount += cycles;

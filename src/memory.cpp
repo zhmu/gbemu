@@ -1,6 +1,7 @@
 #include "memory.h"
 #include <iostream>
 #include <string>
+#include "bootstrap_rom.h"
 #include "io.h"
 
 #include "fmt/core.h"
@@ -67,9 +68,12 @@ namespace gb {
                 case io::WY: return "WY";
                 case io::WX: return "WX";
                 case io::IE: return "IE";
+                case io::DMG: return "DMG";
             }
             return fmt::format("{:x}", address);
         }
+
+        inline constexpr Address DMGROMEnabled = 0xff50;
 
         constexpr bool IsInRange(const Address address, const Address start, const Address end) {
             return address >= start && address <= end;
@@ -99,6 +103,12 @@ namespace gb {
                 IsInRange(address, memory_map::Cartridge0Start, memory_map::Cartridge0End) ||
                 IsInRange(address, memory_map::Cartridge1Start, memory_map::Cartridge1End);
         }
+
+        constexpr bool IsBootstrapROM(const Address address)
+        {
+            return
+                IsInRange(address, memory_map::BootstrapROMStart, memory_map::BootstrapROMEnd);
+        }
     }
 
     namespace cartridge {
@@ -112,6 +122,10 @@ namespace gb {
             if (enableTracing)
                 std::cout << fmt::format("*** read (i/o): {} ({:x}) -> {:x}\n", IORegisterToString(address), address, value);
             return value;
+        }
+
+        if (IsBootstrapROM(address) && io.IsBootstrapROMEnabled()) {
+            return bootstrap_rom::Read_u8(address);
         }
 
         if (IsCartridge(address)) {
@@ -177,6 +191,7 @@ namespace gb {
 
     uint8_t Memory::At_u8(Address address) const
     {
+        if (IsBootstrapROM(address) && io.IsBootstrapROMEnabled()) return bootstrap_rom::Read_u8(address);
         if (IsCartridge(address)) return cartridge::Read_u8(address);
         if (IsRAM(address)) {
             if (IsInRange(address, memory_map::MirrorStart, memory_map::MirrorEnd))

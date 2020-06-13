@@ -6,6 +6,8 @@ namespace gb {
     using Address = uint16_t;
 
     namespace memory_map {
+        inline constexpr Address BootstrapROMStart = 0x0000;
+        inline constexpr Address BootstrapROMEnd = 0x0100;
         inline constexpr Address Cartridge0Start = 0x0000;
         inline constexpr Address Cartridge0End = 0x7fff;
         inline constexpr Address VRAMStart = 0x8000;
@@ -83,6 +85,7 @@ namespace gb {
         inline constexpr Address OBP1 = 0xff49;
         inline constexpr Address WY = 0xff4a;
         inline constexpr Address WX = 0xff4b;
+        inline constexpr Address DMG = 0xff50;
         inline constexpr Address IE = 0xffff;
     }
 

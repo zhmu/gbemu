@@ -22,6 +22,7 @@ namespace {
 bool optionTraceCPU = false;
 bool optionTraceMemory = false;
 bool optionTraceCartridge = false;
+bool optionBootROM = false;
 
 std::string RegistersToString(const Registers& regs)
 {
@@ -37,7 +38,7 @@ std::string RegistersToString(const Registers& regs)
         regs.sp);
 }
 
-std::string Disassemble(const Registers& regs, const Memory& memory, const gb::cpu::Instruction& instruction, const bool has_prefix)
+std::string Disassemble(const Registers& regs, const Memory& memory, const IO& io, const gb::cpu::Instruction& instruction, const bool has_prefix)
 {
     using Argument = gb::cpu::Argument;
 
@@ -75,15 +76,16 @@ std::string Disassemble(const Registers& regs, const Memory& memory, const gb::c
 bool ProcessOptions(int argc, char* argv[])
 {
     int opt;
-    while ((opt = getopt(argc, argv, "h?tmc")) != -1) {
+    while ((opt = getopt(argc, argv, "h?tmcb")) != -1) {
         switch(opt) {
             case 'h':
             case '?':
-                std::cout << fmt::format("usage: {} [-h?tmc] cartridge.gb\n\n", argv[0]);
+                std::cout << fmt::format("usage: {} [-h?tmcb] cartridge.gb\n\n", argv[0]);
                 std::cout << fmt::format("  -h, -?     this help\n");
                 std::cout << fmt::format("  -t         trace CPU instructions\n");
                 std::cout << fmt::format("  -m         trace memory access\n");
                 std::cout << fmt::format("  -c         trace cartridge access\n");
+                std::cout << fmt::format("  -b         enable bootrom emulation\n");
                 return false;
             case 't':
                 optionTraceCPU = true;
@@ -92,6 +94,9 @@ bool ProcessOptions(int argc, char* argv[])
                 break;
             case 'c':
                 optionTraceCartridge = true;
+                break;
+            case 'b':
+                optionBootROM = true;
                 break;
         }
     }
@@ -124,15 +129,17 @@ int main(int argc, char* argv[])
     memory.enableTracing = optionTraceMemory;
     Registers regs;
 
-    {
+    if (!optionBootROM) {
         // From https://gbdev.gg8.se/wiki/articles/Power_Up_Sequence
         regs.a = 0x01; regs.fl = 0xb0;
         regs.b = 0x00; regs.c = 0x13;
         regs.d = 0x00; regs.e = 0xd8;
         regs.h = 0x01; regs.l = 0x4d;
-        regs.sp = 0xfffe;
         regs.pc = 0x100;
+    } else {
+        regs.pc = 0x0;
     }
+    regs.sp = 0xfffe;
 
     auto current = std::chrono::steady_clock::now();
     while(video.HandleEvents(io)) {
@@ -162,7 +169,7 @@ int main(int argc, char* argv[])
             }();
 
             if (optionTraceCPU) {
-                const auto disasm = Disassemble(regs, memory, instruction, opcode == 0xcb);
+                const auto disasm = Disassemble(regs, memory, io, instruction, opcode == 0xcb);
                 std::cout << fmt::format("{} {}", RegistersToString(orig_regs), disasm) << "\n";
             }
             numClocks = instruction.func(regs, memory);

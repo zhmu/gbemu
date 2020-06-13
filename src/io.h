@@ -29,6 +29,7 @@ namespace gb {
         std::optional<int> GetPendingIRQ();
         void ClearPendingIRQ(int n);
         void Tick(const int cycles);
+        bool IsBootstrapROMEnabled();
 
         uint8_t& Register(const Address address);
 
