@@ -1,11 +1,19 @@
-#include <SDL.h>
+#pragma once
 
-namespace gb::gui {
+#include <array>
 
-void ProcessEvent(SDL_Event* event);
+namespace gb {
+class IO;
+namespace gui {
+
 void InitGL();
 void Init();
 void Cleanup();
 void Render();
+void UpdateTexture(const char*);
+bool HandleEvents(IO&);
 
+void OnAudioSample(const int ch, const float sample);
+
+}
 }

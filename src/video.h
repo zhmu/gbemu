@@ -7,6 +7,7 @@ namespace gb {
 
 struct IO;
 struct Memory;
+    
 
 class Video
 {
@@ -17,7 +18,9 @@ public:
     void Tick(IO& io, Memory& memory, const int cycles);
     uint8_t Read(const Address address);
     void Write(const Address address, const uint8_t value);
-    bool HandleEvents(IO& io);
+    bool GetRenderFlagAndReset();
+
+    const char* GetFrameBuffer() const;
 
 private:
     struct Impl;

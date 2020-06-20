@@ -1,9 +1,9 @@
 #include "audio.h"
-#include <SDL.h>
 #include <iostream>
 #include "fmt/core.h"
 
 #include <unistd.h>
+#include "gui.h"
 
 namespace gb {
 
@@ -98,16 +98,18 @@ struct Audio::Impl
         return IsBitSet<7>(Register(io::NR52));
     }
 
+#if 0
     static void AudioCallback(void* userData, Uint8* stream, int len)
     {
         reinterpret_cast<Impl*>(userData)->Mix((len / sizeof(uint32_t)) / 2, reinterpret_cast<int32_t*>(stream));
     }
+#endif
 
     Impl()
     {
         unlink("/tmp/out.raw");
         f = fopen("/tmp/out.raw", "wb");
-
+#if 0
         SDL_AudioSpec want{};
         want.freq = 48000;
         want.format = AUDIO_S32;
@@ -121,12 +123,13 @@ struct Audio::Impl
         if (dev == 0)
             throw std::runtime_error(fmt::format("cannot init audio {}", SDL_GetError()));
         SDL_PauseAudioDevice(dev, 0);
+#endif
     }
 
     ~Impl()
     {
         fclose(f);
-        SDL_CloseAudioDevice(dev);
+        //SDL_CloseAudioDevice(dev);
     }
 
     void TickLengthCounter(IO& io, Memory& memory)
@@ -150,7 +153,9 @@ struct Audio::Impl
     void UpdateCurrentSignal(IO& io, Memory& memory, int cycleCounter)
     {
         auto& ch = channel[1];
-        ch.signalValue = dutyCycles[ch.dutyCycleType][ch.currentDutyCycle];
+        //ch.signalValue = dutyCycles[ch.dutyCycleType][ch.currentDutyCycle];
+        
+
 
         ch.periodCounter += cycleCounter;
         // *8 because each waveform takes 8 frequency timer clocks to cycle through
@@ -161,6 +166,8 @@ struct Audio::Impl
             ch.currentDutyCycle = (ch.currentDutyCycle + 1) & 7;
             ch.periodCounter = ch.periodCounter % period;
         }
+
+        gui::OnAudioSample(1, ch.signalValue * ch.currentVolume);
     }
 
     void Tick(IO& io, Memory& memory, const int cycles)
@@ -188,7 +195,6 @@ struct Audio::Impl
 
     void Mix(int samples, int32_t* buffer)
     {
-        printf("mix: ch1: val %d vol %d; mastervol %d/%d\n", channel[1].signalValue, channel[1].currentVolume, masterVolumeLeft, masterVolumeRight);
         auto out = buffer;
         for(int n = 0; n < samples; ++n) {
             int left{}, right{};
@@ -206,8 +212,8 @@ struct Audio::Impl
             //printf("out %x / %x\n", left, right);
             *out++ = left;
             *out++ = right;
+            fwrite(&left, sizeof(left), 1, f);
         }
-        fwrite(buffer, samples * 2 * sizeof(int32_t), 1, f);
     }
 
     uint8_t Read(const Address address)
@@ -292,7 +298,7 @@ struct Audio::Impl
 
     std::array<uint8_t, 48> data{};
 
-    SDL_AudioDeviceID dev{};
+    //SDL_AudioDeviceID dev{};
     bool audioEnabled{};
     int cycleCounter{};
     int step{};

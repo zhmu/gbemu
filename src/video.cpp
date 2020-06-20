@@ -1,5 +1,4 @@
 #include "video.h"
-#include <SDL.h>
 #include <array>
 #include <chrono>
 #include <thread>
@@ -9,8 +8,14 @@
 #include "memory.h"
 #include "io.h"
 
-inline constexpr int windowWidth = 166;
-inline constexpr int windowHeight = 144;
+#include "imgui.h"
+#include "imgui-SFML.h"
+
+#include <SFML/Graphics/RenderWindow.hpp>
+#include <SFML/Graphics/Texture.hpp>
+#include <SFML/System/Clock.hpp>
+#include <SFML/Window/Event.hpp>
+
 
 namespace gb {
 namespace {
@@ -39,25 +44,10 @@ constexpr std::array<RGB, 4> palette{ {
     { 0xe0, 0xf8, 0xd0 },
 } };
 
-int MapSDLKeyEventToButton(const SDL_Event& event)
-{
-    switch(event.key.keysym.sym) {
-        case SDLK_LEFT: return button::Left;
-        case SDLK_RIGHT: return button::Right;
-        case SDLK_UP: return button::Up;
-        case SDLK_DOWN: return button::Down;
-        case SDLK_a: return button::A;
-        case SDLK_z: return button::B;
-        case SDLK_RETURN: return button::Start;
-        case SDLK_TAB: return button::Select;
-    }
-    return 0;
-}
-
 void PutPixel(uint32_t* frameBuffer, const int x, const RGB& colour)
 {
-    if (x < 0 || x >= windowWidth) return;
-    const uint32_t c = (0xff << 24) | (colour.r << 16) | (colour.g << 8) | colour.b;
+    if (x < 0 || x >= resolution::Width) return;
+    const uint32_t c = (0xff << 24) | (colour.b << 16) | (colour.g << 8) | colour.r;
     frameBuffer[x] = c;
 }
 
@@ -72,33 +62,11 @@ struct Video::Impl
 
     Impl()
     {
-        SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
-
-        gui::InitGL();
-
-        window = SDL_CreateWindow("GBEMU", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, windowWidth, windowHeight, 0);
-        renderer = SDL_CreateRenderer(window, -1, 0);
-
-        texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, windowWidth, windowHeight);
-
-        gui::Init();
-
         lastHSyncTime = std::chrono::steady_clock::now();
     }
 
     ~Impl()
     {
-        SDL_DestroyWindow(window);
-        gui::Cleanup();
-    }
-
-    void Render()
-    {
-        SDL_RenderClear(renderer);
-        SDL_RenderCopy(renderer, texture, NULL, NULL);
-        SDL_RenderPresent(renderer);
-
-        gui::Render();
     }
 
     void FillBG(Memory& memory, uint32_t* displayLine, const int scanLine)
@@ -227,22 +195,15 @@ struct Video::Impl
         if (mode == lcd_mode::readingOAMandVRAM) { // 3
             if (stateCounter == 1) {
                 // Fill current display line
-                FillBG(memory, displayLine.data(), scanLine);
+                FillBG(memory, frameBuffer[scanLine].data(), scanLine);
             }
             if (stateCounter >= 2 && stateCounter < static_cast<int>(2 + activeSprites)) {
-                FillObjects(memory, displayLine.data(), scanLine, stateCounter - 2);
+                FillObjects(memory, frameBuffer[scanLine].data(), scanLine, stateCounter - 2);
             }
 
             // XXX 200 is somewhat in between 168..291 dots
             if (stateCycles >= 200) {
                 // Update texture with new scanline content
-                {
-                    uint32_t* framebuffer;
-                    int pitch;
-                    SDL_LockTexture(texture, NULL, reinterpret_cast<void**>(&framebuffer), &pitch);
-                    memcpy(&framebuffer[scanLine * windowWidth], &displayLine[0], sizeof(uint32_t) * windowWidth);
-                    SDL_UnlockTexture(texture);
-                }
 
                 setMode(lcd_mode::hBlank, 200);
                 if ((stat & (1 << 3)) != 0) {
@@ -266,7 +227,7 @@ struct Video::Impl
                 printf("need to delay %.2f us\n", std::chrono::duration<double, std::micro>(toDelay).count());
 #endif
 
-                std::this_thread::sleep_for(toDelay);
+                //std::this_thread::sleep_for(toDelay);
 
                 uint8_t& scanLine = Register(io::LY);
                 ++scanLine;
@@ -292,7 +253,7 @@ struct Video::Impl
             }
 
             if (scanLine == 154) {
-                Render();
+                needToRender = true;
 
                 Register(io::LY) = 0;
                 triggerLYCInterrupt();
@@ -302,6 +263,13 @@ struct Video::Impl
         }
 
         ++stateCounter;
+    }
+
+    bool GetRenderFlagAndReset()
+    {
+        const auto result = needToRender;
+        needToRender = false;
+        return result;
     }
 
     uint8_t Read(const Address address)
@@ -325,35 +293,10 @@ struct Video::Impl
         Register(address) = value;
     }
 
-    bool HandleEvents(IO& io)
-    {
-        SDL_Event event;
-        while(SDL_PollEvent(&event)) {
-            gui::ProcessEvent(&event);
-            switch(event.type) {
-                case SDL_QUIT: return false;
-                case SDL_KEYDOWN: {
-                    const auto button = MapSDLKeyEventToButton(event);
-                    io.buttonPressed |= button;
-                    break;
-                }
-                case SDL_KEYUP: {
-                    const auto button = MapSDLKeyEventToButton(event);
-                    io.buttonPressed &= ~button;
-                    break;
-                }
-            }
-        }
-        return true;
-    }
-
-    SDL_Window* window{};
-    SDL_Renderer* renderer{};
-    SDL_Texture* texture{};
     int mode{lcd_mode::scanOAM};
     int stateCycles{};
     int stateCounter{};
-    std::array<uint32_t, windowWidth> displayLine{};
+    std::array<std::array<uint32_t, resolution::Width>, resolution::Height> frameBuffer{};
     std::array<uint8_t, 12> data{};
     std::chrono::time_point<std::chrono::steady_clock> lastHSyncTime;
 
@@ -364,6 +307,7 @@ struct Video::Impl
     };
     std::array<Sprite, 10> sprites{};
     size_t activeSprites{};
+    bool needToRender{};
 };
 
 Video::Video()
@@ -388,9 +332,14 @@ void Video::Write(const Address address, const uint8_t value)
     impl->Write(address, value);
 }
 
-bool Video::HandleEvents(IO& io)
+bool Video::GetRenderFlagAndReset()
 {
-    return impl->HandleEvents(io);
+    return impl->GetRenderFlagAndReset();
+}
+
+const char* Video::GetFrameBuffer() const
+{
+    return reinterpret_cast<const char*>(impl->frameBuffer.data());
 }
 
 }

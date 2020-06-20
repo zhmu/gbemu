@@ -89,6 +89,11 @@ namespace gb {
         inline constexpr Address IE = 0xffff;
     }
 
+    namespace resolution {
+        inline constexpr int Width = 166;
+        inline constexpr int Height = 144;
+    }
+
 #if 0
     template<typename T>
     concept bool MemoryInterface = requires(T a) {

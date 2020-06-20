@@ -1,5 +1,6 @@
 #include "cpu.h"
 #include "memory.h"
+#include "gui.h"
 #include "io.h"
 #include "video.h"
 #include "audio.h"
@@ -141,40 +142,42 @@ int main(int argc, char* argv[])
     }
     regs.sp = 0xfffe;
 
+    gb::gui::Init();
     auto current = std::chrono::steady_clock::now();
-    while(video.HandleEvents(io)) {
-        auto tick = [&](const int numClocks) {
-            io.Tick(numClocks);
-            video.Tick(io, memory, numClocks);
-            audio.Tick(io, memory, numClocks);
-        };
-
-        int numClocks = 4; // simulate NOP if halted
+    while(true) {
+        const auto* instruction = &gb::cpu::opcode[0x00]; // NOP
         if (regs.stop) {
-            // Wait until a button press
             printf("in stop\n");
             if (io.buttonPressed != 0)
                 regs.stop = false;
-
         } else if (!regs.halt) {
             const auto orig_regs = regs;
             const auto opcode = gb::cpu::detail::ReadAndAdvancePC_u8(regs, memory);
 
-            const auto& instruction = [&]() {
-                if(opcode != 0xcb)
-                    return gb::cpu::opcode[opcode];
-
+            if (opcode != 0xcb) {
+                instruction = &gb::cpu::opcode[opcode];
+            } else {
                 const auto opcode2 = gb::cpu::detail::ReadAndAdvancePC_u8(regs, memory);
-                return gb::cpu::opcode_cb[opcode2];
-            }();
+                instruction = &gb::cpu::opcode_cb[opcode2];
+            }
 
             if (optionTraceCPU) {
-                const auto disasm = Disassemble(regs, memory, io, instruction, opcode == 0xcb);
+                const auto disasm = Disassemble(regs, memory, io, *instruction, opcode == 0xcb);
                 std::cout << fmt::format("{} {}", RegistersToString(orig_regs), disasm) << "\n";
             }
-            numClocks = instruction.func(regs, memory);
         }
-        tick(numClocks);
+
+        const int numClocks = instruction->func(regs, memory);
+        io.Tick(numClocks);
+        video.Tick(io, memory, numClocks);
+        audio.Tick(io, memory, numClocks);
+
+        if (video.GetRenderFlagAndReset()) {
+            gb::gui::UpdateTexture(video.GetFrameBuffer());
+            gb::gui::Render();
+            if (!gb::gui::HandleEvents(io))
+                break;
+        }
 
         auto now = std::chrono::steady_clock::now();
         auto diff = std::chrono::duration<double, std::micro>(now - current);
@@ -189,6 +192,7 @@ int main(int argc, char* argv[])
             }
         }
     }
+    gb::gui::Cleanup();
 
     return 0;
 }

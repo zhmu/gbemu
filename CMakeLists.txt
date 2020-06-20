@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 2.8)
-project(gbemu)
+project(gbemu CXX)
 
-find_package(SDL2 REQUIRED)
-include_directories(${SDL2_INCLUDE_DIRS})
+find_package(SFML COMPONENTS system window graphics audio REQUIRED)
+message("SFML incs: ${SFML_INCLUDES}")
+message("SFML libs: ${SFML_LIBRARIES}")
 
 add_subdirectory(external/fmtlib)
 add_subdirectory(lib/imgui)

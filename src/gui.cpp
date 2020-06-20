@@ -1,105 +1,138 @@
 #include "gui.h"
-#include <SDL.h>
 #include "imgui.h"
-#include "imgui_impl_sdl.h"
-#include "imgui_impl_opengl3.h"
-#include <GL/gl3w.h>
+#include "imgui-SFML.h"
+#include <deque>
 #include <stdexcept>
+#include <vector>
+#include "io.h"
+#include "types.h"
 
-namespace gb::gui {
+#include <SFML/Graphics/RenderWindow.hpp>
+#include <SFML/Graphics/Texture.hpp>
+#include <SFML/System/Clock.hpp>
+#include <SFML/Window/Event.hpp>
+
+namespace gb {
+namespace gui {
 namespace {
-    SDL_Window* guiWindow{};
-    SDL_GLContext gl_context;
-}
+    using KeyToButton = std::pair<sf::Keyboard::Key, int>;
+    constexpr std::array keyToButtonMappings{
+        KeyToButton{sf::Keyboard::Left, button::Left},
+        KeyToButton{sf::Keyboard::Right, button::Right},
+        KeyToButton{sf::Keyboard::Up, button::Up},
+        KeyToButton{sf::Keyboard::Down, button::Down},
+        KeyToButton{sf::Keyboard::A, button::A},
+        KeyToButton{sf::Keyboard::Z, button::B},
+        KeyToButton{sf::Keyboard::Return, button::Start},
+        KeyToButton{sf::Keyboard::Tab, button::Select}
+    };
 
-void InitGL()
-{
-        // GL 3.0 + GLSL 130
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    sf::Clock deltaClock;
+    std::unique_ptr<sf::RenderWindow> window;
+    std::unique_ptr<sf::Texture> texture;
+
+    sf::Color backgroundColor;
+
+    constexpr int fps = 60;
+    constexpr int numberOfSamples = fps * 60;
+    using ChannelSamples = std::deque<float>;
+    std::array<ChannelSamples, 4> audio_samples;
 }
 
 void Init()
 {
-        guiWindow = SDL_CreateWindow("GUI", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 1024, 768, SDL_WINDOW_OPENGL);
+    for(auto& as: audio_samples)
+        as.resize(numberOfSamples);
 
-        gl_context = SDL_GL_CreateContext(guiWindow);
-        SDL_GL_MakeCurrent(guiWindow, gl_context);
-        SDL_GL_SetSwapInterval(0); // no vsync
+    window = std::make_unique<sf::RenderWindow>(sf::VideoMode(800, 600), "GBEMU");
+    ImGui::SFML::Init(*window);
+    //window->setFramerateLimit(60);
 
-        if (int r = gl3wInit(); r != 0)
-            throw std::runtime_error("unable to initialize glew: " + std::to_string(r));
-
-        IMGUI_CHECKVERSION();
-        ImGui::CreateContext();
-        ImGuiIO& io = ImGui::GetIO(); (void)io;
-        ImGui::StyleColorsDark();
-        ImGui_ImplSDL2_InitForOpenGL(guiWindow, gl_context);
-        const char* glsl_version = "#version 130";
-        ImGui_ImplOpenGL3_Init(glsl_version);
-
+    texture = std::make_unique<sf::Texture>();
+    texture->create(resolution::Width, resolution::Height);
 }
 
 void Cleanup()
 {
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
-    ImGui::DestroyContext();
-
-    SDL_GL_DeleteContext(gl_context);
-    SDL_DestroyWindow(guiWindow);
-    SDL_Quit();
-}
-
-void ProcessEvent(SDL_Event* event)
-{
-    ImGui_ImplSDL2_ProcessEvent(event);
+    window.release();
+    ImGui::SFML::Shutdown();
 }
 
 void Render()
 {
-        SDL_GL_MakeCurrent(guiWindow, gl_context);
-        static bool show_another_window = false;
-        ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+    ImGui::SFML::Update(*window, deltaClock.restart());
 
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplSDL2_NewFrame(guiWindow);
-        ImGui::NewFrame();
+    {
+        ImGui::Begin("Video");
+        const auto size = texture->getSize();
+        ImGui::Image(*texture, sf::Vector2f(size.x, size.y));
+        ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+        ImGui::End();
+    }
 
-        // 2. Show a simple window that we create ourselves. We use a Begin/End pair to created a named window.
-        {
-            static float f = 0.0f;
-            static int counter = 0;
+    // 2. Show a simple window that we create ourselves. We use a Begin/End pair to created a named window.
+    if (0) {
+        static float f = 0.0f;
+        static int counter = 0;
 
-            ImGui::Begin("Hello, world!");                          // Create a window called "Hello, world!" and append into it.
+        ImGui::Begin("Audio!");
 
-            ImGui::Text("This is some useful text.");               // Display some text (you can use a format strings too)
-            //ImGui::Checkbox("Demo Window", &show_demo_window);      // Edit bools storing our window open/close state
-            ImGui::Checkbox("Another Window", &show_another_window);
+        for(int ch = 0; ch < static_cast<int>(audio_samples.size()); ++ch) {
+            const auto& as = audio_samples[ch];
+            std::vector<float> samples;
+            samples.reserve(as.size());
+            std::copy(as.begin(), as.end(), std::back_inserter(samples));
 
-            ImGui::SliderFloat("float", &f, 0.0f, 1.0f);            // Edit 1 float using a slider from 0.0f to 1.0f
-            ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
-
-            if (ImGui::Button("Button"))                            // Buttons return true when clicked (most widgets return true when edited/activated)
-                counter++;
-            ImGui::SameLine();
-            ImGui::Text("counter = %d", counter);
-
-            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-            ImGui::End();
+            char name[64];
+            sprintf(name, "Channel %d", ch + 1);
+            ImGui::PlotLines(name, samples.data(), samples.size(), 0, 0, -1.0f, 1.0f, ImVec2(0,80));
         }
 
-        ImGuiIO& imguiIO = ImGui::GetIO();
-        ImGui::Render();
-        ImGui::EndFrame();
+        ImGui::End();
+    }
+    if (0) {
+        static bool b;
+        ImGui::ShowDemoWindow(&b);
+    }
 
-        glViewport(0, 0, (int)imguiIO.DisplaySize.x, (int)imguiIO.DisplaySize.y);
-        glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
-        glClear(GL_COLOR_BUFFER_BIT);
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        SDL_GL_SwapWindow(guiWindow);
+    window->clear(backgroundColor);
+    ImGui::SFML::Render();
+    window->display();
 }
 
+void UpdateTexture(const char* framebuffer)
+{
+    texture->update(reinterpret_cast<const sf::Uint8*>(framebuffer), resolution::Width, resolution::Height, 0, 0);
+}
+
+void OnAudioSample(const int ch, const float sample)
+{
+    if (ch < 0 || ch >= static_cast<int>(audio_samples.size()))
+        return;
+    auto& as = audio_samples[ch];
+    as.pop_front();
+    as.push_back(sample);
+}
+
+bool HandleEvents(IO& io)
+{
+    io.buttonPressed = 0;
+    for (const auto [ key, button ]: keyToButtonMappings) {
+        if (sf::Keyboard::isKeyPressed(key))
+            io.buttonPressed |= button;
+    }
+
+    sf::Event event;
+    while(window->pollEvent(event)) {
+        ImGui::SFML::ProcessEvent(event);
+        switch(event.type) {
+            case sf::Event::Closed:
+                return false;
+        }
+    }
+   return true;
+}
+
+
+}
 }
