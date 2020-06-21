@@ -3,11 +3,52 @@
 #include "fmt/core.h"
 
 #include <unistd.h>
+#include <fcntl.h>
 #include "gui.h"
 
 namespace gb {
 
 namespace {
+    const uint32_t sampleRate = 48000;
+
+    constexpr std::array<std::array<int, 8>, 4> dutyCycles{{
+        { 0, 0, 0, 0, 0, 0, 0, 1 }, // 12.5%
+        { 1, 0, 0, 0, 0, 0, 0, 1 }, // 25%
+        { 1, 0, 0, 0, 0, 1, 1, 1 }, // 50%
+        { 0, 1, 1, 1, 1, 1, 1, 0 }, // 75%
+    }};
+
+    template<typename T> void Store(int fd, T value)
+    {
+        write(fd, &value, sizeof(value));
+    }
+
+    int MakeWav()
+    {
+        int fd = open("/tmp/out.wav", O_CREAT | O_WRONLY | O_TRUNC, 0644);
+#if 1
+        const uint16_t bitsPerSample = 16;
+        const uint16_t numChannels = 2;
+        const uint32_t byteRate = sampleRate * numChannels * (bitsPerSample / 2);
+        const uint16_t blockAlign = numChannels * (bitsPerSample / 8);
+
+        write(fd, "RIFF", 4);
+        if (uint32_t fileSize = 0xffffffff; true) Store(fd, fileSize);
+        write(fd, "WAVE", 4);
+        write(fd, "fmt ", 4);
+        if (uint32_t len = 16; true) Store(fd, len);
+        if (uint16_t type = 1; true) Store(fd, type);
+        Store(fd, numChannels);
+        Store(fd, sampleRate);
+        Store(fd, byteRate);
+        Store(fd, blockAlign);
+        Store(fd, bitsPerSample);
+        write(fd, "data", 4);
+        if (uint32_t dataSize = 0xffffffff; true) Store(fd, dataSize);
+#endif
+        return fd;
+    }
+
     std::string IORegisterToString(const Address address) {
         switch(address) {
             case io::NR10: return "NR10 [square1: sweep period, negate, shift]";
@@ -61,21 +102,21 @@ namespace {
     struct Channel {
         // Internal state
         bool enabled{};
+        bool lengthEnabled{};
         int lengthCounter{};
+        int initialVolume{};
         int currentVolume{};
-        int signalValue{};
         int dutyCycleType{};
         int currentDutyCycle{};
         int frequency{};
-        int periodCounter{};
-    };
+        int periodTimer{};
 
-    constexpr std::array<std::array<int, 8>, 4> dutyCycles{{
-        { -1, -1, -1, -1, -1, -1, -1, +1 }, // 12.5%
-        { +1, -1, -1, -1, -1, -1, -1, +1 }, // 25%
-        { +1, -1, -1, -1, -1, +1, +1, +1 }, // 50%
-        { -1, +1, +1, +1, +1, +1, +1, -1 }, // 75%
-    }};
+        int GetSample() const {
+            if (!enabled) return 0;
+            return dutyCycles[dutyCycleType][currentDutyCycle] * currentVolume;
+        }
+
+    };
 
     template<int Bit> constexpr inline bool IsBitSet(const uint8_t v)
     {
@@ -84,7 +125,7 @@ namespace {
     }
 }
 
-FILE* f = nullptr;
+int fd = -1;
 
 struct Audio::Impl
 {
@@ -98,128 +139,104 @@ struct Audio::Impl
         return IsBitSet<7>(Register(io::NR52));
     }
 
-#if 0
-    static void AudioCallback(void* userData, Uint8* stream, int len)
-    {
-        reinterpret_cast<Impl*>(userData)->Mix((len / sizeof(uint32_t)) / 2, reinterpret_cast<int32_t*>(stream));
-    }
-#endif
-
     Impl()
     {
-        unlink("/tmp/out.raw");
-        f = fopen("/tmp/out.raw", "wb");
-#if 0
-        SDL_AudioSpec want{};
-        want.freq = 48000;
-        want.format = AUDIO_S32;
-        want.channels = 2;
-        want.samples = 4096;
-        want.userdata = this;
-        want.callback = AudioCallback;
-
-        SDL_AudioSpec have{};
-        dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
-        if (dev == 0)
-            throw std::runtime_error(fmt::format("cannot init audio {}", SDL_GetError()));
-        SDL_PauseAudioDevice(dev, 0);
-#endif
+        sampleTimer = 4'194'304 / sampleRate;
     }
 
     ~Impl()
     {
-        fclose(f);
-        //SDL_CloseAudioDevice(dev);
+        if (fd >= 0) close(fd);
     }
 
-    void TickLengthCounter(IO& io, Memory& memory)
+    void TickLengthCounter()
     {
         auto& ch = channel[1];
-        if (ch.enabled) {
-            if (--ch.lengthCounter == 0) {
-                ch.enabled = false;
-            }
+        if (ch.lengthCounter > 0)
+            --ch.lengthCounter;
+        if (ch.lengthCounter == 0 && ch.lengthEnabled) {
+            std::cout << "TickLengthCounter: disabling ch1\n";
+            ch.enabled = false;
         }
     }
 
-    void TickVolumeEnvelope(IO& io, Memory& memory)
+    void TickVolumeEnvelope()
     {
     }
 
-    void TickSweep(IO& io, Memory& memory)
+    void TickSweep()
     {
     }
 
-    void UpdateCurrentSignal(IO& io, Memory& memory, int cycleCounter)
+    void TickChannels()
     {
         auto& ch = channel[1];
-        //ch.signalValue = dutyCycles[ch.dutyCycleType][ch.currentDutyCycle];
-        
-
-
-        ch.periodCounter += cycleCounter;
-        // *8 because each waveform takes 8 frequency timer clocks to cycle through
-        const auto period = FrequenceToPeriod(ch.frequency) * 8;
-        if (ch.periodCounter >= period) {
-            int n = ch.periodCounter % period;
-            //printf("ch1: period counter %d > period length %d, next sample -> %d\n", ch.periodCounter, period, n);
-            ch.currentDutyCycle = (ch.currentDutyCycle + 1) & 7;
-            ch.periodCounter = ch.periodCounter % period;
+        --ch.periodTimer;
+        if (ch.periodTimer == 0) {
+            ch.currentDutyCycle = (ch.currentDutyCycle + 1) % 8;
+            ch.periodTimer = FrequenceToPeriod(ch.frequency);
         }
-
-        gui::OnAudioSample(1, ch.signalValue * ch.currentVolume);
     }
 
     void Tick(IO& io, Memory& memory, const int cycles)
     {
+        for (int n = 0; n < cycles; ++n)
+            TickChannels();
+
         cycleCounter += cycles;
         if (cycleCounter >= TimerDivisor) {
             cycleCounter -= TimerDivisor;
             if (step == 0 || step == 2 || step == 4 || step == 6)
-                TickLengthCounter(io, memory);
+                TickLengthCounter();
             if (step == 2 || step == 6)
-                TickSweep(io, memory);
+                TickSweep();
             if (step == 7)
-                TickVolumeEnvelope(io, memory);
-            if (++step == 8) step = 0;
+                TickVolumeEnvelope();
+            step = (step + 1) % 8;
         }
 
-        UpdateCurrentSignal(io, memory, cycleCounter);
-
-#if 0
-        auto& ch = channel[1];
-        const int16_t v = ch.signalValue * 16384;
-        fwrite(&v, sizeof(v), 1, f);
-#endif
-    }
-
-    void Mix(int samples, int32_t* buffer)
-    {
-        auto out = buffer;
-        for(int n = 0; n < samples; ++n) {
-            int left{}, right{};
-            {
-                int chNum = 1;
-                auto& ch = channel[chNum];
-                const int v = ch.signalValue * ch.currentVolume; // -15 .. 15
+        sampleTimer -= cycles;
+        if (sampleTimer <= 0) {
+            sampleTimer = 4'194'304 / sampleRate;
+            int16_t left{}, right{};
+            for (int chNum = 0; chNum < 3; ++chNum) {
+                const int v = channel[chNum].GetSample();
                 if (outputLeft[chNum]) left += v;
                 if (outputRight[chNum]) right += v;
             }
-            left *= masterVolumeLeft;
-            right *= masterVolumeRight;
-            // Left/right are now always between -105 .. 105
-            left *= 65536; right *= 65536;
-            //printf("out %x / %x\n", left, right);
-            *out++ = left;
-            *out++ = right;
-            fwrite(&left, sizeof(left), 1, f);
+            left *= masterVolumeLeft * 8;
+            right *= masterVolumeRight * 8;
+
+            static bool first = true;
+            if (first) {
+                first = false;
+                fd = MakeWav();
+            }
+
+            if (fd >= 0) {
+                write(fd, &left, sizeof(left)); 
+                write(fd, &right, sizeof(right)); 
+            }
         }
     }
 
     uint8_t Read(const Address address)
     {
-        uint8_t v = Register(address);
-        return v;
+        constexpr std::array<uint8_t, io::NR52 - io::NR10 + 1> registerOrMask{
+            0x80, 0x3f, 0x00, 0xff, 0xbf, // NR10..NR14
+            0xff, 0x3f, 0x00, 0xff, 0xbf, // NR20..NR24
+            0x7f, 0xff, 0x9f, 0xff, 0xbf, // NR30..NR34
+            0xff, 0xff, 0x00, 0x00, 0xbf, // NR40..NR44
+            0x00, 0x00, 0x70              // NR50..NR52
+        };
+        uint8_t value = Register(address);
+        if (address >= 0xff27 && address <= 0xff2f)
+            value = 0xff;
+        else {
+            value = value | registerOrMask[address - io::NR10];
+        }
+        std::cout << fmt::format("audio: read {} ({:x}): {:x}\n", IORegisterToString(address), address, value);
+        return value;
     }
 
     void Write(const Address address, uint8_t value)
@@ -242,30 +259,35 @@ struct Audio::Impl
         }
 
         switch(address) {
+            case io::NR11:
             case io::NR21: {
-                auto& ch = channel[1];
+                auto& ch = channel[address == io::NR11 ? 0 : 1];
                 ch.dutyCycleType = value >> 6;
                 ch.lengthCounter = 64 - (value & 63);
                 break;
             }
+            case io::NR12:
+            case io::NR22: {
+                auto& ch = channel[address == io::NR12 ? 0 : 1];
+                ch.initialVolume = value >> 4;
+                break;
+            }
+            case io::NR13:
             case io::NR23: {
-                auto& ch = channel[1];
+                auto& ch = channel[address == io::NR13 ? 0 : 1];
                 ch.frequency = (ch.frequency & 0x700) | value;
                 break;
             }
+            case io::NR14:
             case io::NR24: {
-                auto& ch = channel[1];
+                auto& ch = channel[address == io::NR14 ? 0 : 1];
                 ch.frequency = (ch.frequency & 0xff) | ((value & 7) << 8);
-                // TODO Length enable?
+                ch.lengthEnabled = IsBitSet<6>(value);
                 if (IsBitSet<7>(value)) {
                     ch.enabled = true;
                     if (ch.lengthCounter == 0) ch.lengthCounter = 64;
-                    // TODO reload frequency timer with period
-                    ch.periodCounter = 0;
-                    // TODO reload volume envelope timer with period
-                    // TODO reload channel volume from NRx2
-                    //ch.currentVolume = Register(io::NR22) >> 4;
-                    ch.currentVolume = 15; // XXX
+                    ch.periodTimer = FrequenceToPeriod(ch.frequency);
+                    ch.currentVolume = ch.initialVolume;
                     ch.currentDutyCycle = 0;
                 }
                 break;
@@ -302,6 +324,7 @@ struct Audio::Impl
     bool audioEnabled{};
     int cycleCounter{};
     int step{};
+    int sampleTimer{};
 };
 
 Audio::Audio()
