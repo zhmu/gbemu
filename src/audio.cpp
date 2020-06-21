@@ -93,6 +93,7 @@ namespace {
     }
 
     constexpr int TimerDivisor = 8192; // 4MHz / 8192 = 512Hz timer
+    constexpr int SampleTimerReload = 4'194'304 / sampleRate;
 
     constexpr int FrequenceToPeriod(const int freq)
     {
@@ -110,6 +111,15 @@ namespace {
         int currentDutyCycle{};
         int frequency{};
         int periodTimer{};
+        int volumeEnvelopeAdd{};
+        int volumeEnvelopePeriod{};
+        int volumeEnvelopeTimer{};
+        bool sweepEnabled{};
+        int sweepTimer{};
+        int sweepFrequency{};
+        int sweepPeriod{};
+        bool sweepAdd{};
+        int sweepShift{};
 
         int GetSample() const {
             if (!enabled) return 0;
@@ -141,7 +151,7 @@ struct Audio::Impl
 
     Impl()
     {
-        sampleTimer = 4'194'304 / sampleRate;
+        sampleTimer = SampleTimerReload;
     }
 
     ~Impl()
@@ -151,30 +161,63 @@ struct Audio::Impl
 
     void TickLengthCounter()
     {
-        auto& ch = channel[1];
-        if (ch.lengthCounter > 0)
-            --ch.lengthCounter;
-        if (ch.lengthCounter == 0 && ch.lengthEnabled) {
-            std::cout << "TickLengthCounter: disabling ch1\n";
-            ch.enabled = false;
+        for(auto& ch: channel) {
+            if (ch.lengthCounter > 0)
+                --ch.lengthCounter;
+            if (ch.lengthCounter == 0 && ch.lengthEnabled)
+                ch.enabled = false;
         }
     }
 
     void TickVolumeEnvelope()
     {
+        for(auto& ch: channel) {
+            if (ch.volumeEnvelopePeriod == 0) continue;
+            if (--ch.volumeEnvelopeTimer == 0) {
+                ch.volumeEnvelopeTimer = ch.volumeEnvelopePeriod;
+                int newVolume = ch.currentVolume + ch.volumeEnvelopeAdd;
+                if (newVolume >= 0 && newVolume <= 15)
+                    ch.currentVolume = newVolume;
+            }
+        }
+    }
+
+    int CalculateSweep(const Channel& ch)
+    {
+        int v = ch.sweepFrequency;
+        const int sweepPortion = ch.sweepFrequency >> ch.sweepShift;
+        if (ch.sweepAdd)
+            v += sweepPortion;
+        else
+            v -= sweepPortion;
+        return v;
     }
 
     void TickSweep()
     {
+        auto& ch = channel[0];
+        if (ch.sweepTimer > 0) --ch.sweepTimer;
+        if (ch.sweepEnabled && ch.sweepPeriod != 0 && ch.sweepTimer == 0) {
+            ch.sweepTimer = ch.sweepPeriod;
+            const auto newFreq = CalculateSweep(ch);
+            if (newFreq <= 2047 && ch.sweepShift != 0) {
+                ch.sweepFrequency = newFreq;
+                ch.frequency = newFreq;
+                ch.periodTimer = FrequenceToPeriod(ch.frequency);
+                if (CalculateSweep(2047) > 2047)
+                    ch.enabled = false;
+            }
+        }
     }
 
     void TickChannels()
     {
-        auto& ch = channel[1];
-        --ch.periodTimer;
-        if (ch.periodTimer == 0) {
-            ch.currentDutyCycle = (ch.currentDutyCycle + 1) % 8;
-            ch.periodTimer = FrequenceToPeriod(ch.frequency);
+        for(auto& ch: channel) {
+            --ch.periodTimer;
+            if (ch.periodTimer == 0) {
+                ch.currentDutyCycle = (ch.currentDutyCycle + 1) % 8;
+                ch.periodTimer = FrequenceToPeriod(ch.frequency);
+            }
         }
     }
 
@@ -197,9 +240,9 @@ struct Audio::Impl
 
         sampleTimer -= cycles;
         if (sampleTimer <= 0) {
-            sampleTimer = 4'194'304 / sampleRate;
+            sampleTimer = SampleTimerReload;
             int16_t left{}, right{};
-            for (int chNum = 0; chNum < 3; ++chNum) {
+            for (size_t chNum = 0; chNum < channel.size(); ++chNum) {
                 const int v = channel[chNum].GetSample();
                 if (outputLeft[chNum]) left += v;
                 if (outputRight[chNum]) right += v;
@@ -259,6 +302,13 @@ struct Audio::Impl
         }
 
         switch(address) {
+            case io::NR10: {
+                auto& ch = channel[0];
+                ch.sweepPeriod = (value >> 4) & 7;
+                ch.sweepAdd = IsBitSet<3>(value);
+                ch.sweepShift = value & 7;
+                break;
+            }
             case io::NR11:
             case io::NR21: {
                 auto& ch = channel[address == io::NR11 ? 0 : 1];
@@ -270,6 +320,10 @@ struct Audio::Impl
             case io::NR22: {
                 auto& ch = channel[address == io::NR12 ? 0 : 1];
                 ch.initialVolume = value >> 4;
+                ch.currentVolume = ch.initialVolume;
+                ch.volumeEnvelopeAdd = IsBitSet<3>(value) ? 1 : -1;
+                ch.volumeEnvelopePeriod = value & 7;
+                ch.volumeEnvelopeTimer = ch.volumeEnvelopePeriod;
                 break;
             }
             case io::NR13:
@@ -287,8 +341,15 @@ struct Audio::Impl
                     ch.enabled = true;
                     if (ch.lengthCounter == 0) ch.lengthCounter = 64;
                     ch.periodTimer = FrequenceToPeriod(ch.frequency);
+                    ch.volumeEnvelopeTimer = ch.volumeEnvelopePeriod;
                     ch.currentVolume = ch.initialVolume;
                     ch.currentDutyCycle = 0;
+
+                    if (address == io::NR14) {
+                        ch.sweepEnabled = ch.sweepPeriod > 0 || ch.sweepShift > 0;
+                        ch.sweepFrequency = ch.frequency;
+                        ch.sweepTimer = ch.sweepPeriod;
+                    }
                 }
                 break;
             }
